@@ -24,7 +24,11 @@ pub struct SP1ProverConfig {
 impl Default for SP1ProverConfig {
     fn default() -> Self {
         SP1ProverConfig {
-            private_key: std::env::var("SP1_PRIVATE_KEY").ok(),
+            // NETWORK_PRIVATE_KEY is the standard env var used by SP1 SDK for network proving
+            // Fall back to SP1_PRIVATE_KEY for backwards compatibility
+            private_key: std::env::var("NETWORK_PRIVATE_KEY")
+                .ok()
+                .or_else(|| std::env::var("SP1_PRIVATE_KEY").ok()),
             rpc_url: std::env::var("SP1_RPC_URL").ok(),
         }
     }

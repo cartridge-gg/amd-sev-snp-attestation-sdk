@@ -60,7 +60,7 @@ impl AmdSevSnpProver {
                     std::env::set_var("NETWORK_RPC_URL", api_url);
                 }
                 if let Some(api_key) = &system_cfg.private_key {
-                    std::env::set_var("NETWORK_API_KEY", api_key);
+                    std::env::set_var("NETWORK_PRIVATE_KEY", api_key);
                 }
                 AmdSevSnpProver {
                     kds: KDS::new(),
