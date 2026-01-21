@@ -225,7 +225,9 @@ impl AmdSevSnpProver {
         let cert_chain = CertChain::parse_rev(&vek_certs)?;
         cert_chain.verify_chain()?;
         cert_chain.check_valid(timestamp)?;
-        let mut trusted_certs_prefix_len = 2;
+        // Default to 1 (only root cert trusted) when no on-chain cache is available.
+        // This ensures the ZK program verifies the full chain from ASK → VCEK.
+        let mut trusted_certs_prefix_len = 1;
         if let Some(contract) = &self.contract {
             let program_id = block_on(contract.program_id(self.verifier.zktype()))?;
             let verify_result = self.get_program_id().verify(&program_id).with_context(|| {
