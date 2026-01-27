@@ -49,7 +49,7 @@ pub enum RootKeyType {
 /// So, it can only be done using a legacy /dev/sev-guest device.
 pub struct DerivedKeyOptions {
     /// Pick a root key from which to derive the derived key.
-    /// Defaults to VECK
+    /// Defaults to VCEK
     pub root_key_type: Option<RootKeyType>,
     /// Specify which Guest Field Select bits to enable. It is a 6 digit binary string. For each bit, 0 denotes off and 1 denotes on.
     /// The least significant (rightmost) bit is Guest Policy followed by Image ID, Family ID, Measurement, SVN, TCB Version which is the most significant (leftmost) bit.
@@ -97,7 +97,7 @@ impl Device {
         Ok(Device { provider })
     }
 
-    /// Retrieve attestion report from SEV device.
+    /// Retrieve attestation report from SEV device.
     pub fn get_attestation_report(
         &self,
         options: &ReportOptions,
