@@ -8,8 +8,8 @@ pub enum ProcType {
     Bergamo,
     /// 8004 series AMD EPYC Processor
     Siena,
-    // Turin,
-    // Venice,
+    Turin,
+    Venice,
 }
 
 impl ProcType {
@@ -29,6 +29,8 @@ impl std::fmt::Display for ProcType {
             ProcType::Genoa => write!(f, "Genoa"),
             ProcType::Bergamo => write!(f, "Bergamo"),
             ProcType::Siena => write!(f, "Siena"),
+            ProcType::Turin => write!(f, "Turin"),
+            ProcType::Venice => write!(f, "Venice"),
         }
     }
 }

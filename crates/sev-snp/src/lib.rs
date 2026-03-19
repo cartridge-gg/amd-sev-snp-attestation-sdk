@@ -116,7 +116,7 @@ impl SevSnp {
     /// This is because the VLEK cert is not available from KDS.
     ///
     /// # Returns:
-    /// /// - Ok: HashMap containing the DER certificates
+    /// - Ok: HashMap containing the DER certificates
     /// - Error: Problems with certificate retrieval
     /// The HashMap will contain the following keys:
     /// - "ARK": AMD Root Key
@@ -237,10 +237,11 @@ impl SevSnp {
         verifier.verify()
     }
 
-    /// In the Regular Attestation workflow, all certificates used to verify the attestation report are
+    /// In the Regular Attestation workflow, the certificates used to verify the attestation report are
     /// fetched from the AMD Key Distribution Service (KDS).
-    /// Note that when the signer is a VLEK, the VLEK certificate must be provided as it cannot be queried from the KDS.
-    /// Afterwhich, only the ARK and ASK are retrieved from the KDS.
+    /// When CertType is VCEK: all certs (VCEK, ARK, ASK) are fetched from KDS.
+    /// When CertType is VLEK: VLEK cert must be provided as it cannot be queried from the KDS.
+    ///                  ARK and ASK are then fetched from the KDS.
     fn regular_attestation_workflow(
         &self,
         report: &AttestationReport,
@@ -277,55 +278,90 @@ pub mod c {
     use crate::device::ReportOptions;
 
     use super::SevSnp;
-    use once_cell::sync::Lazy;
     use std::ptr::copy_nonoverlapping;
-    use std::sync::Mutex;
+    use std::sync::{LazyLock, Mutex};
 
-    static ATTESTATION_REPORT: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(Vec::new()));
-    static VEK_CERT: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(Vec::new()));
-    static VAR_DATA: Lazy<Mutex<Vec<u8>>> = Lazy::new(|| Mutex::new(Vec::new()));
+    pub const SEV_SNP_OK: i32 = 0;
+    pub const SEV_SNP_ERR_NULL_POINTER: i32 = -1;
+    pub const SEV_SNP_ERR_BUFFER_TOO_SMALL: i32 = -2;
+    pub const SEV_SNP_ERR_NO_REPORT: i32 = -3;
+    pub const SEV_SNP_ERR_ATTESTATION_FAILED: i32 = -4;
+    pub const SEV_SNP_ERR_LOCK_POISONED: i32 = -5;
 
-    /// Use this function to generate the attestation report on Rust.
-    /// Returns the size of the report, which you can use to malloc a buffer of suitable size
-    /// before you call get_attestation_report_raw().
-    #[no_mangle]
-    pub extern "C" fn generate_attestation_report() -> usize {
-        let sev_snp = SevSnp::new().unwrap();
-        let (report, var_data) = sev_snp.get_attestation_report().unwrap();
-        let bytes = bincode::serialize(&report).unwrap();
-        let report_len = bytes.len();
-        let var_data_len = var_data.as_ref().map_or(0, |v| v.len());
-        match ATTESTATION_REPORT.lock() {
-            Ok(mut t) => {
-                *t = bytes;
-            }
+    static ATTESTATION_REPORT: LazyLock<Mutex<Vec<u8>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+    static VEK_CERT: LazyLock<Mutex<Vec<u8>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+    static VAR_DATA: LazyLock<Mutex<Vec<u8>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+    /// Generate the attestation report.
+    /// Returns the size of the report (positive) on success, or a negative error code on failure.
+    /// Use the returned size to malloc a buffer before calling get_attestation_report_raw().
+    #[unsafe(no_mangle)]
+    pub extern "C" fn generate_attestation_report() -> i32 {
+        let sev_snp = match SevSnp::new() {
+            Ok(s) => s,
             Err(e) => {
-                panic!("Error: {:?}", e);
+                eprintln!("sev-snp: failed to initialize: {e}");
+                return SEV_SNP_ERR_ATTESTATION_FAILED;
+            }
+        };
+        let (report, var_data) = match sev_snp.get_attestation_report() {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("sev-snp: failed to get attestation report: {e}");
+                return SEV_SNP_ERR_ATTESTATION_FAILED;
+            }
+        };
+        let bytes = match bincode::serialize(&report) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("sev-snp: failed to serialize report: {e}");
+                return SEV_SNP_ERR_ATTESTATION_FAILED;
+            }
+        };
+        let report_len = bytes.len();
+
+        match ATTESTATION_REPORT.lock() {
+            Ok(mut t) => *t = bytes,
+            Err(e) => {
+                eprintln!("sev-snp: attestation report lock poisoned: {e}");
+                return SEV_SNP_ERR_LOCK_POISONED;
             }
         }
 
-        if var_data_len > 0 {
-            match VAR_DATA.lock() {
-                Ok(mut t) => {
-                    *t = var_data.unwrap();
-                }
-                Err(e) => {
-                    panic!("Error: {:?}", e);
+        if let Some(vd) = var_data {
+            if !vd.is_empty() {
+                match VAR_DATA.lock() {
+                    Ok(mut t) => *t = vd,
+                    Err(e) => {
+                        eprintln!("sev-snp: var data lock poisoned: {e}");
+                        return SEV_SNP_ERR_LOCK_POISONED;
+                    }
                 }
             }
         }
-        report_len
+
+        report_len as i32
     }
 
-    /// Use this function to generate the attestation report with options.
-    /// Returns the size of the report, which you can use to malloc a buffer of suitable size
-    /// before you call get_attestation_report_raw().
-    #[no_mangle]
+    /// Generate the attestation report with custom options.
+    /// Returns the size of the report (positive) on success, or a negative error code on failure.
+    /// `report_data` must point to a 64-byte buffer. Returns SEV_SNP_ERR_NULL_POINTER if null.
+    #[unsafe(no_mangle)]
     pub extern "C" fn generate_attestation_report_with_options(
-        report_data: *mut u8,
+        report_data: *const u8,
         vmpl: u32,
-    ) -> usize {
-        let sev_snp = SevSnp::new().unwrap();
+    ) -> i32 {
+        if report_data.is_null() {
+            eprintln!("sev-snp: report_data is null");
+            return SEV_SNP_ERR_NULL_POINTER;
+        }
+        let sev_snp = match SevSnp::new() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("sev-snp: failed to initialize: {e}");
+                return SEV_SNP_ERR_ATTESTATION_FAILED;
+            }
+        };
         let mut rust_report_data: [u8; 64] = [0; 64];
         unsafe {
             copy_nonoverlapping(report_data, rust_report_data.as_mut_ptr(), 64);
@@ -334,137 +370,217 @@ pub mod c {
             report_data: Some(rust_report_data),
             vmpl: Some(vmpl),
         };
-        let (report, var_data) = sev_snp
-            .get_attestation_report_with_options(&options)
-            .unwrap();
-        let bytes = bincode::serialize(&report).unwrap();
-        let report_len = bytes.len();
-        let var_data_len = var_data.as_ref().map_or(0, |v| v.len());
-        match ATTESTATION_REPORT.lock() {
-            Ok(mut t) => {
-                *t = bytes;
-            }
+        let (report, var_data) = match sev_snp.get_attestation_report_with_options(&options) {
+            Ok(r) => r,
             Err(e) => {
-                panic!("Error: {:?}", e);
+                eprintln!("sev-snp: failed to get attestation report with options: {e}");
+                return SEV_SNP_ERR_ATTESTATION_FAILED;
+            }
+        };
+        let bytes = match bincode::serialize(&report) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("sev-snp: failed to serialize report: {e}");
+                return SEV_SNP_ERR_ATTESTATION_FAILED;
+            }
+        };
+        let report_len = bytes.len();
+
+        match ATTESTATION_REPORT.lock() {
+            Ok(mut t) => *t = bytes,
+            Err(e) => {
+                eprintln!("sev-snp: attestation report lock poisoned: {e}");
+                return SEV_SNP_ERR_LOCK_POISONED;
             }
         }
-        if var_data_len > 0 {
-            match VAR_DATA.lock() {
-                Ok(mut t) => {
-                    *t = var_data.unwrap();
-                }
-                Err(e) => {
-                    panic!("Error: {:?}", e);
+
+        if let Some(vd) = var_data {
+            if !vd.is_empty() {
+                match VAR_DATA.lock() {
+                    Ok(mut t) => *t = vd,
+                    Err(e) => {
+                        eprintln!("sev-snp: var data lock poisoned: {e}");
+                        return SEV_SNP_ERR_LOCK_POISONED;
+                    }
                 }
             }
         }
-        report_len
+
+        report_len as i32
     }
 
-    /// Ensure that generate_attestation_report() is called first to get the size of buf.
-    /// Use this size to malloc enough space for the attestation report that will be transferred.
-    #[no_mangle]
-    pub extern "C" fn get_attestation_report_raw(buf: *mut u8) {
+    /// Copy the attestation report into `buf`.
+    /// `buf_len` must be at least the size returned by generate_attestation_report().
+    /// Returns bytes written on success, or a negative error code on failure.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn get_attestation_report_raw(buf: *mut u8, buf_len: usize) -> i32 {
+        if buf.is_null() {
+            eprintln!("sev-snp: get_attestation_report_raw: buf is null");
+            return SEV_SNP_ERR_NULL_POINTER;
+        }
         let bytes = match ATTESTATION_REPORT.lock() {
             Ok(t) => t.clone(),
             Err(e) => {
-                panic!("Error: {:?}", e);
+                eprintln!("sev-snp: attestation report lock poisoned: {e}");
+                return SEV_SNP_ERR_LOCK_POISONED;
             }
         };
-        if bytes.len() == 0 {
-            panic!("Error: No attestation report found! Please call generate_attestation_report() first.");
+        if bytes.is_empty() {
+            eprintln!("sev-snp: no attestation report found, call generate_attestation_report() first");
+            return SEV_SNP_ERR_NO_REPORT;
         }
-
+        if buf_len < bytes.len() {
+            eprintln!("sev-snp: buffer too small ({buf_len} < {})", bytes.len());
+            return SEV_SNP_ERR_BUFFER_TOO_SMALL;
+        }
         unsafe {
             copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
         }
+        bytes.len() as i32
     }
 
-    /// Use this function to generate the vek cert.
-    /// Returns the size of the vek cert, which can be used to malloc a buffer of suitable size
-    #[no_mangle]
-    pub extern "C" fn generate_vek_cert() -> usize {
-        let sev_snp = SevSnp::new().unwrap();
-        let cert_map = sev_snp.get_certificates_from_device().unwrap();
-        let vek_cert = if cert_map.contains_key("VLEK") {
-            cert_map.get("VLEK").unwrap()
+    /// Generate the VEK certificate.
+    /// Returns the size of the cert (positive) on success, or a negative error code on failure.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn generate_vek_cert() -> i32 {
+        let sev_snp = match SevSnp::new() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("sev-snp: failed to initialize: {e}");
+                return SEV_SNP_ERR_ATTESTATION_FAILED;
+            }
+        };
+        let cert_map = match sev_snp.get_certificates_from_device() {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("sev-snp: failed to get certificates from device: {e}");
+                return SEV_SNP_ERR_ATTESTATION_FAILED;
+            }
+        };
+        let vek_cert = if let Some(cert) = cert_map.get("VLEK") {
+            cert
+        } else if let Some(cert) = cert_map.get("VCEK") {
+            cert
         } else {
-            cert_map.get("VCEK").unwrap()
+            eprintln!("sev-snp: no VLEK or VCEK certificate found");
+            return SEV_SNP_ERR_ATTESTATION_FAILED;
         };
         let len = vek_cert.len();
         match VEK_CERT.lock() {
-            Ok(mut t) => {
-                *t = vek_cert.to_vec();
-            }
+            Ok(mut t) => *t = vek_cert.to_vec(),
             Err(e) => {
-                panic!("Error: {:?}", e);
+                eprintln!("sev-snp: vek cert lock poisoned: {e}");
+                return SEV_SNP_ERR_LOCK_POISONED;
             }
         }
-        len
+        len as i32
     }
 
-    /// Ensure that generate_vek_cert() is called first to get the size of buf.
-    /// Use this size to malloc enough space for the vek cert that will be transferred.
-    #[no_mangle]
-    pub extern "C" fn get_vek_cert(buf: *mut u8) {
+    /// Copy the VEK certificate into `buf`.
+    /// `buf_len` must be at least the size returned by generate_vek_cert().
+    /// Returns bytes written on success, or a negative error code on failure.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn get_vek_cert(buf: *mut u8, buf_len: usize) -> i32 {
+        if buf.is_null() {
+            eprintln!("sev-snp: get_vek_cert: buf is null");
+            return SEV_SNP_ERR_NULL_POINTER;
+        }
         let bytes = match VEK_CERT.lock() {
             Ok(t) => t.clone(),
             Err(e) => {
-                panic!("Error: {:?}", e);
+                eprintln!("sev-snp: vek cert lock poisoned: {e}");
+                return SEV_SNP_ERR_LOCK_POISONED;
             }
         };
-        if bytes.len() == 0 {
-            panic!("Error: No VEK cert found! Please call generate_vek_cert() first.");
+        if bytes.is_empty() {
+            eprintln!("sev-snp: no VEK cert found, call generate_vek_cert() first");
+            return SEV_SNP_ERR_NO_REPORT;
         }
-
+        if buf_len < bytes.len() {
+            eprintln!("sev-snp: buffer too small ({buf_len} < {})", bytes.len());
+            return SEV_SNP_ERR_BUFFER_TOO_SMALL;
+        }
         unsafe {
             copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
         }
+        bytes.len() as i32
     }
 
-    /// Retrieve the length of var_data. Please call this only after you have called
-    /// generate_attestation_report(). If var_data is empty, this function will return 0.
-    #[no_mangle]
-    pub extern "C" fn get_var_data_len() -> usize {
-        let length = match VAR_DATA.lock() {
-            Ok(t) => t.len(),
+    /// Retrieve the length of var_data. Call after generate_attestation_report().
+    /// Returns the length (non-negative) on success, or a negative error code on failure.
+    /// Returns 0 if var_data is empty.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn get_var_data_len() -> i32 {
+        match VAR_DATA.lock() {
+            Ok(t) => t.len() as i32,
             Err(e) => {
-                panic!("Error: {:?}", e);
+                eprintln!("sev-snp: var data lock poisoned: {e}");
+                SEV_SNP_ERR_LOCK_POISONED
             }
-        };
-        length
+        }
     }
 
-    /// Retrieve var_data. Please call this only after you have called
-    /// get_var_data_len() to malloc a buffer of an appropriate size.
-    #[no_mangle]
-    pub extern "C" fn get_var_data(buf: *mut u8) {
+    /// Copy var_data into `buf`.
+    /// `buf_len` must be at least the value returned by get_var_data_len().
+    /// Returns bytes written on success, or a negative error code on failure.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn get_var_data(buf: *mut u8, buf_len: usize) -> i32 {
+        if buf.is_null() {
+            eprintln!("sev-snp: get_var_data: buf is null");
+            return SEV_SNP_ERR_NULL_POINTER;
+        }
         let bytes = match VAR_DATA.lock() {
             Ok(t) => t.clone(),
             Err(e) => {
-                panic!("Error: {:?}", e);
+                eprintln!("sev-snp: var data lock poisoned: {e}");
+                return SEV_SNP_ERR_LOCK_POISONED;
             }
         };
-        if bytes.len() == 0 {
-            panic!("Error: No var data found! Please call generate_attestation_report() first.");
+        if bytes.is_empty() {
+            eprintln!("sev-snp: no var data found, call generate_attestation_report() first");
+            return SEV_SNP_ERR_NO_REPORT;
         }
-
+        if buf_len < bytes.len() {
+            eprintln!("sev-snp: buffer too small ({buf_len} < {})", bytes.len());
+            return SEV_SNP_ERR_BUFFER_TOO_SMALL;
+        }
         unsafe {
             copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
         }
+        bytes.len() as i32
     }
 
-    /// Use this function to retrieve the report ID from an attestation report.
-    /// The report ID is generated by the firmware and persists with the guest instance throughout its lifetime.
-    /// The buffer should be of size 32 bytes exactly.
-    #[no_mangle]
-    pub extern "C" fn get_report_id(buf: *mut u8) {
-        let sev_snp = SevSnp::new().unwrap();
-        let (report, var_data) = sev_snp.get_attestation_report().unwrap();
+    /// Retrieve the report ID from a fresh attestation report.
+    /// `buf` must point to a buffer of at least 32 bytes.
+    /// Returns bytes written (32) on success, or a negative error code on failure.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn get_report_id(buf: *mut u8, buf_len: usize) -> i32 {
+        if buf.is_null() {
+            eprintln!("sev-snp: get_report_id: buf is null");
+            return SEV_SNP_ERR_NULL_POINTER;
+        }
+        let sev_snp = match SevSnp::new() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("sev-snp: failed to initialize: {e}");
+                return SEV_SNP_ERR_ATTESTATION_FAILED;
+            }
+        };
+        let (report, _) = match sev_snp.get_attestation_report() {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("sev-snp: failed to get attestation report: {e}");
+                return SEV_SNP_ERR_ATTESTATION_FAILED;
+            }
+        };
         let bytes = report.report_id;
-
+        if buf_len < bytes.len() {
+            eprintln!("sev-snp: buffer too small ({buf_len} < {}), need at least 32 bytes", bytes.len());
+            return SEV_SNP_ERR_BUFFER_TOO_SMALL;
+        }
         unsafe {
             copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
         }
+        bytes.len() as i32
     }
 }

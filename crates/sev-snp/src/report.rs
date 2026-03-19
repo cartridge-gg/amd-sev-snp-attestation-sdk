@@ -138,11 +138,21 @@ impl AttestationReport {
             let mod_id = self.cpuid_mod_id;
             let stepping = self.cpuid_step;
             // 25: Zen 3, Zen 3+, Zen 4
+            // 26: Zen 5, Zen 6
             // Milan: Zen 3, Genoa: Zen 4, Bergamo: Zen 4c
-            // Siena: Zen 4c, Turin: Zen 5, Venice: TBD.
+            // Siena: Zen 4c, Turin: Zen 5, Venice: Zen 6
             if fam_id == 25 && mod_id == 1 {
                 return Ok(&ProcType::Milan);
+            } else if fam_id == 25 && mod_id == 17 {
+                return Ok(&ProcType::Genoa);
+            } else if fam_id == 26 && mod_id == 0 {
+                return Ok(&ProcType::Turin); // 9005
+            } else if fam_id == 26 && mod_id == 16 {
+                return Ok(&ProcType::Turin); // 9965, Turin Dense
+            } else if fam_id == 26 && mod_id == 144 {
+                return Ok(&ProcType::Venice); // 9006
             }
+            // TODO: fam_id == 25 && mod_id == 160 is shared by both Sienna and Bergamo.
             // TODO: fill up more code types as it becomes available.
             println!(
                 "Family: {}, Mod_id: {}, Stepping: {}",
