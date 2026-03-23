@@ -8491,7 +8491,6 @@ dependencies = [
  "cbindgen 0.29.0",
  "coco-provider",
  "hex",
- "once_cell",
  "openssl",
  "rand 0.8.5",
  "serde",
