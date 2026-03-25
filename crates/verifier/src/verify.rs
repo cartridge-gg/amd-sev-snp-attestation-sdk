@@ -132,7 +132,7 @@ fn check_cert_bytes(ext: &X509Extension, val: &[u8]) -> bool {
                 panic!("check_cert_bytes: Invalid number of bytes encountered!");
             }
             if val.len() != 0x40 {
-                panic!("check_cert_bytes: Invalid certificate harward id length encountered!");
+                panic!("check_cert_bytes: Invalid certificate hardware id length encountered!");
             }
 
             return &ext.value[2..] == val;
