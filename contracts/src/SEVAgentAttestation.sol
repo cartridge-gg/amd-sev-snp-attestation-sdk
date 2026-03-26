@@ -148,7 +148,7 @@ contract SEVAgentAttestation is Ownable, CertCacheBase, ISnpAttestation {
     /**
      * @param zkCoProcessorType 1 - RiscZero, 2 - Succinct... etc.
      * @return this is either the IMAGE_ID for RiscZero Guest Program or
-     * Succiinct Program Verifying Key
+     * Succinct Program Verifying Key
      */
     function programIdentifier(ZkCoProcessorType zkCoProcessorType) external view override returns (bytes32) {
         return _zkConfig[zkCoProcessorType].latestProgramIdentifier;

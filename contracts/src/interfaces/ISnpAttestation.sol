@@ -78,7 +78,7 @@ interface ISnpAttestation {
     /**
      * @param zkCoProcessorType 1 - RiscZero, 2 - Succinct, 3 - Pico... etc.
      * @return this is either the IMAGE_ID for RiscZero Guest Program or
-     * Succiinct Program Verifying Key
+     * Succinct Program Verifying Key
      */
     function programIdentifier(ZkCoProcessorType zkCoProcessorType) external view returns (bytes32);
 
