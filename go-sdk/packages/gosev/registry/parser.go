@@ -36,6 +36,10 @@ func parseSevDeployment(data []byte) (*SevContracts, error) {
 		return nil, fmt.Errorf("VERIFIER address not found in deployment")
 	}
 
+	if !common.IsHexAddress(deployment.Verifier) {
+		return nil, fmt.Errorf("invalid VERIFIER address: %q", deployment.Verifier)
+	}
+
 	return &SevContracts{
 		Verifier: common.HexToAddress(deployment.Verifier),
 	}, nil
