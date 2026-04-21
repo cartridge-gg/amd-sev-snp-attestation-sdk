@@ -11,6 +11,9 @@ import (
 //go:embed metadata.json
 var metadataJSON []byte
 
+// Added for backward compatibility.
+var ByChainId = New
+
 // New loads the network configuration for the given chain ID.
 // Returns an error if the chain ID is not found or data is invalid.
 func New(chainID uint64) (*Network, error) {
