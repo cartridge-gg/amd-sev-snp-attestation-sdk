@@ -22,8 +22,5 @@
     "rpc_endpoints": ["https://1rpc.io/ata/testnet", "https://rpc-testnet.ata.network"],
     "gas_price_hint_wei": 300,
     "block_explorers": ["https://explorer-testnet.ata.network/"]
-  },
-  "default": {
-    "network_key": "automata_testnet"
   }
 }

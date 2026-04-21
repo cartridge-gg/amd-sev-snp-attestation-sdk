@@ -70,23 +70,14 @@ func parseNetwork(key string, metadata *NetworkMetadata, sevData []byte) (*Netwo
 
 // parseMetadata parses the metadata JSON and returns the entry matching chainID
 func parseMetadata(data []byte, chainID uint64) (string, *NetworkMetadata, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
+	var networks map[string]*NetworkMetadata
+	if err := json.Unmarshal(data, &networks); err != nil {
 		return "", nil, fmt.Errorf("failed to parse metadata: %w", err)
 	}
 
-	for key, rawMsg := range raw {
-		if key == "default" {
-			continue
-		}
-
-		var meta NetworkMetadata
-		if err := json.Unmarshal(rawMsg, &meta); err != nil {
-			return "", nil, fmt.Errorf("invalid metadata for network %q: %w", key, err)
-		}
-
+	for key, meta := range networks {
 		if meta.ChainID == chainID {
-			return key, &meta, nil
+			return key, meta, nil
 		}
 	}
 

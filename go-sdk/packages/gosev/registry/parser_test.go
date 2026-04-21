@@ -50,9 +50,6 @@ func TestParseMetadata_Found(t *testing.T) {
 			"chain_id": 1398243,
 			"testnet": true,
 			"rpc_endpoints": ["https://rpc-testnet.ata.network"]
-		},
-		"default": {
-			"network_key": "automata_testnet"
 		}
 	}`)
 
@@ -105,21 +102,3 @@ func TestParseMetadata_InvalidNetworkEntry(t *testing.T) {
 	}
 }
 
-func TestParseMetadata_IgnoresDefaultKey(t *testing.T) {
-	data := []byte(`{
-		"eth_sepolia": {
-			"name": "Ethereum Sepolia",
-			"chain_id": 11155111,
-			"testnet": true,
-			"rpc_endpoints": ["https://1rpc.io/sepolia"]
-		},
-		"default": {
-			"network_key": "eth_sepolia"
-		}
-	}`)
-
-	_, _, err := parseMetadata(data, 11155111)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
