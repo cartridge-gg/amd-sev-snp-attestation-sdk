@@ -6,7 +6,7 @@ edition = "2021"
 license = "Apache-2.0"
 
 [dependencies]
-sp1-zkvm = { version = "5.2.1" }
+sp1-zkvm = { version = "=6.3.0" }
 # Verifier always uses bonsai-trie (Katana/Starknet format) for storage proofs.
 amd-sev-snp-attestation-verifier = { path = "../../verifier/", features = ["sp1"] }
 hex = { version = "0.4" }

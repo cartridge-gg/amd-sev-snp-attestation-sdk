@@ -3,15 +3,14 @@ use std::marker::PhantomData;
 use alloy_primitives::{hex::FromHex, Bytes, B256};
 use alloy_sol_types::SolValue;
 use anyhow::anyhow;
-use sp1_methods::ENV_PROVER;
+use sp1_methods::{block_on, ENV_PROVER};
 use sp1_sdk::{
-    network::builder::NetworkProverBuilder, HashableKey, SP1Proof, SP1ProvingKey, SP1Stdin,
+    env::EnvProvingKey, HashableKey, ProveRequest, Prover, ProverClient, SP1Proof, SP1Stdin,
     SP1VerifyingKey, SP1_CIRCUIT_VERSION,
 };
 
 use crate::{
     program::{Program, RemoteProverConfig},
-    utils::block_on,
     RawProof, RawProofType,
 };
 
@@ -55,7 +54,7 @@ impl TryFrom<SP1ProverConfig> for RemoteProverConfig {
 pub struct ProgramSP1<ZkType, Input, Output> {
     zktype: ZkType,
     vk: &'static SP1VerifyingKey,
-    pk: &'static SP1ProvingKey,
+    pk: &'static EnvProvingKey,
     elf: &'static [u8],
     _marker: PhantomData<(Input, Output)>,
 }
@@ -65,7 +64,7 @@ impl<ZkType, Input, Output> ProgramSP1<ZkType, Input, Output> {
         zktype: ZkType,
         elf: &'static [u8],
         vk: &'static SP1VerifyingKey,
-        pk: &'static SP1ProvingKey,
+        pk: &'static EnvProvingKey,
     ) -> Self {
         ProgramSP1 {
             zktype,
@@ -81,12 +80,14 @@ impl<ZkType, Input, Output> ProgramSP1<ZkType, Input, Output> {
         stdin: SP1Stdin,
         raw_proof_type: RawProofType,
     ) -> anyhow::Result<RawProof> {
-        let prover = ENV_PROVER.prove(&self.pk, &stdin);
-        let prover = match raw_proof_type {
-            RawProofType::Composite => prover.compressed(),
-            RawProofType::Groth16 => prover.groth16(),
-        };
-        let proof = prover.run()?;
+        let proof = block_on(async {
+            let req = ENV_PROVER.prove(self.pk, stdin);
+            let req = match raw_proof_type {
+                RawProofType::Composite => req.compressed(),
+                RawProofType::Groth16 => req.groth16(),
+            };
+            req.await
+        })?;
 
         Ok(RawProof::from_proof(
             &(proof.proof, self.vk),
@@ -145,12 +146,12 @@ where
 
     fn upload_image(&self, cfg: &RemoteProverConfig) -> anyhow::Result<()> {
         block_on(async {
-            let mut builder = NetworkProverBuilder::default().private_key(&cfg.api_key);
+            let mut builder = ProverClient::builder().network().private_key(&cfg.api_key);
             if let Some(api_url) = &cfg.api_url {
                 builder = builder.rpc_url(&api_url);
             }
-            let prover = builder.build();
-            prover.register_program(&self.vk, self.elf).await?;
+            let prover = builder.build().await;
+            prover.register_program(self.vk, self.elf).await?;
             Ok(())
         })
     }
