@@ -280,6 +280,7 @@ impl<ZkType, Input, Output> ProgramRisc0<ZkType, Input, Output> {
         Ok(RawProof {
             encoded_proof: Bytes::new(), // Empty proof in dev mode
             journal,
+            cost: None,
         })
     }
 

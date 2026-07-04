@@ -101,10 +101,34 @@ pub enum RawProofType {
     Composite,
 }
 
+/// Cost of generating a proof, as reported by the proving backend.
+///
+/// Populated only for backends that expose it (currently the SP1 prover
+/// network); `None` fields are used when a given figure is unavailable (e.g.
+/// off-network proving, or a field the network has not yet computed). The
+/// figures come from the fulfilled prover-network request, so they reflect the
+/// actual work billed for the proof.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProofCost {
+    /// RISC-V cycle count executed by the zkVM program.
+    pub cycles: Option<u64>,
+    /// Prover-network gas (PGU) consumed by the request.
+    pub gas_used: Option<u64>,
+    /// Price per gas unit, in $PROVE base units (18 decimals).
+    pub gas_price: Option<u64>,
+    /// Amount deducted from the fulfiller's balance, a decimal string in $PROVE
+    /// base units (18 decimals). Note this is a fulfiller-side balance movement,
+    /// not the requester's invoice — see the prover-network docs.
+    pub deduction_amount: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RawProof {
     pub encoded_proof: Bytes,
     pub journal: Bytes,
+    /// Cost of generating this proof, when the backend reports it.
+    #[serde(default)]
+    pub cost: Option<ProofCost>,
 }
 
 impl RawProof {
@@ -116,7 +140,14 @@ impl RawProof {
         Ok(Self {
             journal,
             encoded_proof,
+            cost: None,
         })
+    }
+
+    /// Attaches proof-generation cost to this proof, consuming and returning it.
+    pub fn with_cost(mut self, cost: Option<ProofCost>) -> Self {
+        self.cost = cost;
+        self
     }
 
     pub fn decode_proof<P>(&self) -> anyhow::Result<P>
