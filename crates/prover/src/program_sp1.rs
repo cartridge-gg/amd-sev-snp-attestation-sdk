@@ -5,12 +5,13 @@ use alloy_sol_types::SolValue;
 use anyhow::anyhow;
 use sp1_methods::{block_on, ENV_PROVER};
 use sp1_sdk::{
-    env::EnvProvingKey, HashableKey, ProveRequest, Prover, ProverClient, SP1Proof, SP1Stdin,
-    SP1VerifyingKey, SP1_CIRCUIT_VERSION,
+    env::{EnvProver, EnvProvingKey},
+    HashableKey, ProveRequest, Prover, ProverClient, SP1Proof, SP1Stdin, SP1VerifyingKey,
+    SP1_CIRCUIT_VERSION,
 };
 
 use crate::{
-    program::{Program, RemoteProverConfig},
+    program::{Program, ProofCost, RemoteProverConfig},
     RawProof, RawProofType,
 };
 
@@ -80,6 +81,49 @@ impl<ZkType, Input, Output> ProgramSP1<ZkType, Input, Output> {
         stdin: SP1Stdin,
         raw_proof_type: RawProofType,
     ) -> anyhow::Result<RawProof> {
+        // On the prover network, drive `NetworkProver` directly so we can hold onto the
+        // `request_id` and look up the fulfilled request's billed cost afterwards — the
+        // high-level `ENV_PROVER.prove(..).await` path discards the id. Off-network
+        // (cpu/mock) there is no fee, so we keep the original path and report no cost.
+        if let EnvProver::Network(network) = &*ENV_PROVER {
+            let EnvProvingKey::Network { pk, .. } = self.pk else {
+                return Err(anyhow!(
+                    "network prover selected but proving key is not a network key"
+                ));
+            };
+
+            return block_on(async {
+                let req = network.prove(pk, stdin);
+                let req = match raw_proof_type {
+                    RawProofType::Composite => req.compressed(),
+                    RawProofType::Groth16 => req.groth16(),
+                };
+
+                let request_id = req.request().await?;
+                let proof = network.wait_proof(request_id, None, None).await?;
+
+                // Best-effort: a failed details lookup must not discard an otherwise valid
+                // proof, so cost degrades to `None` rather than erroring.
+                let cost = network
+                    .get_proof_request(request_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|r| ProofCost {
+                        cycles: r.cycles,
+                        gas_used: r.gas_used,
+                        gas_price: r.gas_price,
+                        deduction_amount: r.deduction_amount,
+                    });
+
+                Ok(RawProof::from_proof(
+                    &(proof.proof, self.vk),
+                    proof.public_values.to_vec().into(),
+                )?
+                .with_cost(cost))
+            });
+        }
+
         let proof = block_on(async {
             let req = ENV_PROVER.prove(self.pk, stdin);
             let req = match raw_proof_type {
