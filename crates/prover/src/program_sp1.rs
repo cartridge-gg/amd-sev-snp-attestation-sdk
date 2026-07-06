@@ -120,7 +120,8 @@ impl<ZkType, Input, Output> ProgramSP1<ZkType, Input, Output> {
                     &(proof.proof, self.vk),
                     proof.public_values.to_vec().into(),
                 )?
-                .with_cost(cost))
+                .with_cost(cost)
+                .with_request_id(Some(request_id)))
             });
         }
 

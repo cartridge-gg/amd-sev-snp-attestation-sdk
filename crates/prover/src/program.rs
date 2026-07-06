@@ -129,6 +129,10 @@ pub struct RawProof {
     /// Cost of generating this proof, when the backend reports it.
     #[serde(default)]
     pub cost: Option<ProofCost>,
+    /// The prover-network request id of this proof, when generated on the network. This is the
+    /// value the Succinct explorer indexes at `/request/<id>`; off-network proofs report `None`.
+    #[serde(default)]
+    pub request_id: Option<B256>,
 }
 
 impl RawProof {
@@ -141,12 +145,19 @@ impl RawProof {
             journal,
             encoded_proof,
             cost: None,
+            request_id: None,
         })
     }
 
     /// Attaches proof-generation cost to this proof, consuming and returning it.
     pub fn with_cost(mut self, cost: Option<ProofCost>) -> Self {
         self.cost = cost;
+        self
+    }
+
+    /// Attaches the prover-network request id to this proof, consuming and returning it.
+    pub fn with_request_id(mut self, request_id: Option<B256>) -> Self {
+        self.request_id = request_id;
         self
     }
 
