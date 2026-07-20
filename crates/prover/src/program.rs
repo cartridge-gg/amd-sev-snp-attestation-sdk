@@ -80,6 +80,26 @@ pub trait Program: Send + Sync {
         raw_proof_type: RawProofType,
         encoded_composite_proofs: Option<&[&Bytes]>,
     ) -> anyhow::Result<RawProof>;
+
+    /// Recovers an already-generated proof from a remote proving network by its request id,
+    /// without submitting (and paying for) a new proving request.
+    ///
+    /// This is the crash/retry-recovery counterpart to [`Self::gen_proof`]: a caller that
+    /// persisted the [`RawProof::request_id`] of a fulfilled request can rebuild the same
+    /// [`RawProof`] as long as the network still retains it. `timeout` bounds how long to wait
+    /// for the network to report the request (a recovery caller typically wants a short bound —
+    /// an unknown or expired id should fail fast so the caller can fall back to fresh proving).
+    ///
+    /// Only meaningful for network-backed proof systems; the default implementation reports the
+    /// operation as unsupported.
+    fn recover_proof(
+        &self,
+        request_id: B256,
+        timeout: Option<core::time::Duration>,
+    ) -> anyhow::Result<RawProof> {
+        let _ = (request_id, timeout);
+        Err(anyhow!("proof recovery by request id is not supported by this proof system"))
+    }
 }
 
 /// Configuration for remote proof generation services.

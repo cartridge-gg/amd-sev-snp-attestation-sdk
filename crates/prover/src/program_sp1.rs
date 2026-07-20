@@ -156,6 +156,45 @@ where
     fn zktype(&self) -> Self::ZkType {
         self.zktype
     }
+    fn recover_proof(
+        &self,
+        request_id: B256,
+        timeout: Option<core::time::Duration>,
+    ) -> anyhow::Result<RawProof> {
+        // Same NetworkProver plumbing as `gen_raw_proof`, minus the `request()` — the request
+        // already exists on the network; we only wait for (or immediately fetch) its result.
+        let EnvProver::Network(network) = &*ENV_PROVER else {
+            return Err(anyhow!(
+                "proof recovery by request id requires the network prover (SP1_PROVER=network)"
+            ));
+        };
+
+        block_on(async {
+            let proof = network.wait_proof(request_id, timeout, None).await?;
+
+            // Best-effort, mirroring `gen_raw_proof`: a failed details lookup must not discard
+            // an otherwise valid proof, so cost degrades to `None` rather than erroring.
+            let cost = network
+                .get_proof_request(request_id)
+                .await
+                .ok()
+                .flatten()
+                .map(|r| ProofCost {
+                    cycles: r.cycles,
+                    gas_used: r.gas_used,
+                    gas_price: r.gas_price,
+                    deduction_amount: r.deduction_amount,
+                });
+
+            Ok(RawProof::from_proof(
+                &(proof.proof, self.vk),
+                proof.public_values.to_vec().into(),
+            )?
+            .with_cost(cost)
+            .with_request_id(Some(request_id)))
+        })
+    }
+
     fn onchain_proof(&self, proof: &RawProof) -> anyhow::Result<Bytes> {
         let (sp1_proof, _) = proof.decode_proof::<(SP1Proof, SP1VerifyingKey)>()?;
         Ok(match sp1_proof {
